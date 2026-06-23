@@ -62,3 +62,11 @@ coverage/
 # Misc
 *.tsbuildinfo
 .eslintcache
+
+# Packaged app artifacts
+*.exe
+*.msi
+*.dmg
+*.zip
+*.7z
+*.tar.gz

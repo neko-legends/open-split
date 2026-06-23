@@ -34,6 +34,16 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub low_gpu_mode: bool,
 
+    /// User-defined launcher tile order. Unknown entries are ignored by the
+    /// frontend; newly detected tools are appended after the saved order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub launcher_order: Vec<String>,
+
+    /// Tools hidden from the launcher picker. They remain launchable from
+    /// Settings, defaults, profiles, and the hidden-tools dropdown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_tools: Vec<String>,
+
     /// Named profiles. Empty by default; users add via Settings or by editing
     /// the file directly. Detection in `detect.rs` knows about common tools
     /// without requiring a profile entry.
@@ -69,6 +79,8 @@ impl Config {
             default_profile: None,
             ssh_inherit: true,
             low_gpu_mode: true,
+            launcher_order: Vec::new(),
+            hidden_tools: Vec::new(),
             profiles: HashMap::new(),
         }
     }
@@ -82,10 +94,10 @@ impl Config {
             tracing::info!(path = %path.display(), "wrote default config");
             return Ok(defaults);
         }
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let parsed: Config = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let parsed: Config =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         Ok(parsed)
     }
 
@@ -136,11 +148,7 @@ pub fn profile_to_spec(config: &Config, name: &str) -> Option<LaunchSpec> {
 /// Construct a `LaunchSpec` from a detected tool (catalog entry). When the
 /// user has a profile of the same name we prefer that (so their custom args
 /// win); otherwise we synthesize one from the detection result.
-pub fn spec_for_detected(
-    config: &Config,
-    name: &str,
-    resolved_path: Option<&str>,
-) -> LaunchSpec {
+pub fn spec_for_detected(config: &Config, name: &str, resolved_path: Option<&str>) -> LaunchSpec {
     if let Some(spec) = profile_to_spec(config, name) {
         return spec;
     }

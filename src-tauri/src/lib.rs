@@ -13,6 +13,13 @@ mod session;
 
 use ipc::{AppState, CliOverride};
 
+const DEFAULT_WINDOW_WIDTH: f64 = 1280.0;
+const DEFAULT_WINDOW_HEIGHT: f64 = 800.0;
+const MIN_WINDOW_WIDTH: f64 = 480.0;
+const MIN_WINDOW_HEIGHT: f64 = 320.0;
+const LANDSCAPE_WINDOW_WIDTH_RATIO: f64 = 0.5;
+const PORTRAIT_WINDOW_WIDTH_RATIO: f64 = 0.9;
+
 /// CLI arguments understood by the `opensplit` binary.
 #[derive(Debug, Parser)]
 #[command(
@@ -99,6 +106,8 @@ pub fn run() {
             ipc::set_default_profile,
             ipc::set_ssh_inherit,
             ipc::set_low_gpu_mode,
+            ipc::set_launcher_order,
+            ipc::set_tool_hidden,
             ipc::spawn_pane,
             ipc::write_pane,
             ipc::resize_pane,
@@ -108,31 +117,56 @@ pub fn run() {
         ])
         .setup(|app| {
             use tauri::Manager;
-            // On first ever launch (no saved window-state file), resize to 1/4
-            // of the primary monitor. On subsequent launches the window-state
+            // On first ever launch (no saved window-state file), resize from
+            // the active monitor. On subsequent launches the window-state
             // plugin restores the user's last size, so we leave it alone.
-            let state_path = app.handle().path()
+            let state_path = app
+                .handle()
+                .path()
                 .app_data_dir()
                 .map(|d| d.join("window-state.json"))
                 .unwrap_or_default();
 
             if !state_path.exists() {
                 if let Some(window) = app.handle().get_webview_window("main") {
-                    if let Some(monitor) = window.primary_monitor().ok().flatten() {
+                    if let Some(monitor) = window
+                        .current_monitor()
+                        .ok()
+                        .flatten()
+                        .or_else(|| window.primary_monitor().ok().flatten())
+                    {
                         let size = monitor.size();
                         let scale = monitor.scale_factor();
-                        let lw = (size.width as f64 / scale) as u32;
-                        let lh = (size.height as f64 / scale) as u32;
-                        let target_w = (lw / 2).max(640);
-                        let target_h = (lh / 2).max(400);
-                        let _ = window.set_size(tauri::Size::Logical(
-                            tauri::LogicalSize { width: target_w as f64, height: target_h as f64 }
-                        ));
-                        let cx = ((lw - target_w) / 2) as i32;
-                        let cy = ((lh - target_h) / 2) as i32;
-                        let _ = window.set_position(tauri::Position::Logical(
-                            tauri::LogicalPosition { x: cx as f64, y: cy as f64 }
-                        ));
+                        let lw = size.width as f64 / scale;
+                        let lh = size.height as f64 / scale;
+                        let width_ratio = if lw < lh {
+                            PORTRAIT_WINDOW_WIDTH_RATIO
+                        } else {
+                            LANDSCAPE_WINDOW_WIDTH_RATIO
+                        };
+                        let aspect = DEFAULT_WINDOW_HEIGHT / DEFAULT_WINDOW_WIDTH;
+                        let mut target_w = (lw * width_ratio).round();
+                        let mut target_h = (target_w * aspect).round();
+                        let max_h = (lh * 0.9).round().max(1.0);
+
+                        if target_h > max_h {
+                            target_h = max_h;
+                            target_w = (target_h / aspect).round();
+                        }
+
+                        target_w = target_w.max(MIN_WINDOW_WIDTH.min(lw)).min(lw.max(1.0));
+                        target_h = target_h.max(MIN_WINDOW_HEIGHT.min(lh)).min(lh.max(1.0));
+                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+                            width: target_w,
+                            height: target_h,
+                        }));
+                        let cx = ((lw - target_w) / 2.0).max(0.0);
+                        let cy = ((lh - target_h) / 2.0).max(0.0);
+                        let _ =
+                            window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+                                x: cx,
+                                y: cy,
+                            }));
                     }
                 }
             }

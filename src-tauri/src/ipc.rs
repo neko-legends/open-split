@@ -156,10 +156,7 @@ pub fn get_startup_action(state: State<'_, Arc<AppState>>) -> StartupAction {
 /// $SHELL → bash → sh on Unix). The returned spec always sets `cwd` to the
 /// caller-supplied directory so the shell opens in the right place.
 #[tauri::command]
-pub fn get_shell_spec(
-    state: State<'_, Arc<AppState>>,
-    cwd: Option<String>,
-) -> LaunchSpec {
+pub fn get_shell_spec(state: State<'_, Arc<AppState>>, cwd: Option<String>) -> LaunchSpec {
     let cfg = state.config.read();
     // Prefer the user's explicit "shell" profile.
     if let Some(mut spec) = config::profile_to_spec(&cfg, "shell") {
@@ -184,15 +181,21 @@ pub fn get_shell_spec(
 }
 
 #[cfg(windows)]
-fn default_shell_command() -> String { "cmd.exe".into() }
+fn default_shell_command() -> String {
+    "cmd.exe".into()
+}
 #[cfg(windows)]
-fn default_shell_args() -> Vec<String> { vec![] }
+fn default_shell_args() -> Vec<String> {
+    vec![]
+}
 #[cfg(not(windows))]
 fn default_shell_command() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
 }
 #[cfg(not(windows))]
-fn default_shell_args() -> Vec<String> { vec!["-l".into()] }
+fn default_shell_args() -> Vec<String> {
+    vec!["-l".into()]
+}
 
 // ---------------------------------------------------------------------------
 // Detection + profiles
@@ -251,6 +254,8 @@ pub struct ConfigSnapshot {
     pub default_profile: Option<String>,
     pub ssh_inherit: bool,
     pub low_gpu_mode: bool,
+    pub launcher_order: Vec<String>,
+    pub hidden_tools: Vec<String>,
     pub config_path: Option<String>,
 }
 
@@ -261,6 +266,8 @@ pub fn get_config(state: State<'_, Arc<AppState>>) -> ConfigSnapshot {
         default_profile: cfg.default_profile.clone(),
         ssh_inherit: cfg.ssh_inherit,
         low_gpu_mode: cfg.low_gpu_mode,
+        launcher_order: cfg.launcher_order.clone(),
+        hidden_tools: cfg.hidden_tools.clone(),
         config_path: config::config_path().map(|p| p.display().to_string()),
     }
 }
@@ -315,6 +322,65 @@ pub fn set_low_gpu_mode(
     {
         let mut cfg = state.config.write();
         cfg.low_gpu_mode = args.enabled;
+        cfg.save().map_err(err)?;
+    }
+    Ok(get_config(state))
+}
+
+fn unique_tool_names(names: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names {
+        let name = name.trim();
+        if !name.is_empty() && !out.iter().any(|existing: &String| existing == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetLauncherOrderArgs {
+    pub order: Vec<String>,
+}
+
+#[tauri::command]
+pub fn set_launcher_order(
+    state: State<'_, Arc<AppState>>,
+    args: SetLauncherOrderArgs,
+) -> Result<ConfigSnapshot, String> {
+    {
+        let mut cfg = state.config.write();
+        cfg.launcher_order = unique_tool_names(args.order);
+        cfg.save().map_err(err)?;
+    }
+    Ok(get_config(state))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetToolHiddenArgs {
+    pub name: String,
+    pub hidden: bool,
+}
+
+#[tauri::command]
+pub fn set_tool_hidden(
+    state: State<'_, Arc<AppState>>,
+    args: SetToolHiddenArgs,
+) -> Result<ConfigSnapshot, String> {
+    {
+        let mut cfg = state.config.write();
+        let mut hidden = unique_tool_names(cfg.hidden_tools.clone());
+        let name = args.name.trim();
+        if !name.is_empty() {
+            if args.hidden {
+                if !hidden.iter().any(|existing| existing == name) {
+                    hidden.push(name.to_string());
+                }
+            } else {
+                hidden.retain(|existing| existing != name);
+            }
+        }
+        cfg.hidden_tools = hidden;
         cfg.save().map_err(err)?;
     }
     Ok(get_config(state))
@@ -385,10 +451,7 @@ pub struct WritePaneArgs {
 }
 
 #[tauri::command]
-pub fn write_pane(
-    state: State<'_, Arc<AppState>>,
-    args: WritePaneArgs,
-) -> Result<(), String> {
+pub fn write_pane(state: State<'_, Arc<AppState>>, args: WritePaneArgs) -> Result<(), String> {
     let pane = pty::require(&state.panes, &args.pane_id).map_err(err)?;
     pane.write(args.data.as_bytes()).map_err(err)
 }
@@ -401,10 +464,7 @@ pub struct ResizePaneArgs {
 }
 
 #[tauri::command]
-pub fn resize_pane(
-    state: State<'_, Arc<AppState>>,
-    args: ResizePaneArgs,
-) -> Result<(), String> {
+pub fn resize_pane(state: State<'_, Arc<AppState>>, args: ResizePaneArgs) -> Result<(), String> {
     let pane = pty::require(&state.panes, &args.pane_id).map_err(err)?;
     pane.resize(args.cols.max(1), args.rows.max(1)).map_err(err)
 }
@@ -415,10 +475,7 @@ pub struct ClosePaneArgs {
 }
 
 #[tauri::command]
-pub fn close_pane(
-    state: State<'_, Arc<AppState>>,
-    args: ClosePaneArgs,
-) -> Result<(), String> {
+pub fn close_pane(state: State<'_, Arc<AppState>>, args: ClosePaneArgs) -> Result<(), String> {
     if let Some(pane) = state.panes.remove(&args.pane_id) {
         let _ = pane.kill();
     }

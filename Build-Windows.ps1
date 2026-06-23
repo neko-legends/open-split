@@ -34,8 +34,11 @@ if ($env:PATH -notlike "*$cargobin*") {
     Write-Host "Added $cargobin to PATH for this session."
 }
 
-$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-if (-not $npmCmd) {
+$npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if (-not $npmCommand) {
+    $npmCommand = Get-Command npm -ErrorAction SilentlyContinue
+}
+if (-not $npmCommand) {
     $fallback = "C:\Program Files\nodejs\npm.cmd"
     if (Test-Path $fallback) {
         $npmCmd = $fallback
@@ -44,11 +47,13 @@ if (-not $npmCmd) {
         throw "npm not found. Install Node.js 20+ from https://nodejs.org/"
     }
 } else {
-    $npmCmd = $npmCmd.Source
+    $npmCmd = $npmCommand.Source
 }
+Write-Host "Using npm: $npmCmd"
 
 function Invoke-Npm {
-    & $npmCmd @args
+    $npmArgs = $args
+    & $npmCmd @npmArgs
     if ($LASTEXITCODE -ne 0) { throw "npm exited with code $LASTEXITCODE" }
 }
 
@@ -85,6 +90,10 @@ if (-not $version) { throw "Could not determine OpenSplit version from src-tauri
 
 Remove-Item "$releaseOutDir\opensplit-*-windows-x64.exe" -Force -ErrorAction SilentlyContinue
 Remove-Item "$releaseOutDir\opensplit-*-windows-x64.exe.sha256" -Force -ErrorAction SilentlyContinue
+Remove-Item "$releaseOutDir\OpenSplit_*_x64-setup.exe" -Force -ErrorAction SilentlyContinue
+Remove-Item "$releaseOutDir\OpenSplit_*_x64-setup.exe.sha256" -Force -ErrorAction SilentlyContinue
+Remove-Item "$releaseOutDir\OpenSplit_*_x64_en-US.msi" -Force -ErrorAction SilentlyContinue
+Remove-Item "$releaseOutDir\OpenSplit_*_x64_en-US.msi.sha256" -Force -ErrorAction SilentlyContinue
 
 if (Test-Path $exeSrc) {
     $hash = (Get-FileHash $exeSrc -Algorithm SHA256).Hash.ToLower()
@@ -124,7 +133,11 @@ if ($bundleItems) {
     Write-Host "Installer bundles:" -ForegroundColor Cyan
     $bundleItems | ForEach-Object {
         $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+        $dest = Join-Path $releaseOutDir $_.Name
+        Copy-Item $_.FullName $dest -Force
+        Set-Content "$dest.sha256" "$h  $($_.Name)" -Encoding ASCII
         Write-Host "  $($_.FullName)"
         Write-Host "  SHA256: $h"
+        Write-Host "  Copied to: $dest"
     }
 }

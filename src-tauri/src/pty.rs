@@ -14,9 +14,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
-use portable_pty::{
-    native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize,
-};
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -178,15 +176,12 @@ pub fn spawn(app: &AppHandle, spec: LaunchSpec, cols: u16, rows: u16) -> Result<
         "spawning pty child"
     );
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .with_context(|| {
-            format!(
-                "spawning `{}` (resolved to `{}`)",
-                spec.command, resolved_program
-            )
-        })?;
+    let child = pair.slave.spawn_command(cmd).with_context(|| {
+        format!(
+            "spawning `{}` (resolved to `{}`)",
+            spec.command, resolved_program
+        )
+    })?;
     let child_pid = child.process_id();
     // Independent kill handle that doesn't share a lock with the waiter.
     let killer = child.clone_killer();
@@ -453,8 +448,7 @@ fn wrap_if_batch(resolved: PathBuf, args: &[String]) -> (String, Vec<String>) {
 /// In each dir, try `<name>` as-is first, then each extension in `PATHEXT`.
 #[cfg(windows)]
 pub(crate) fn which_windows(program: &str) -> Option<PathBuf> {
-    let pathext = std::env::var("PATHEXT")
-        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let exts: Vec<String> = pathext
         .split(';')
         .filter(|s| !s.is_empty())

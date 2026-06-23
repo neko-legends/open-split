@@ -33,6 +33,8 @@ export interface ConfigSnapshot {
   default_profile: string | null;
   ssh_inherit: boolean;
   low_gpu_mode: boolean;
+  launcher_order: string[];
+  hidden_tools: string[];
   config_path: string | null;
 }
 
@@ -108,6 +110,17 @@ export function setSshInherit(enabled: boolean): Promise<ConfigSnapshot> {
 
 export function setLowGpuMode(enabled: boolean): Promise<ConfigSnapshot> {
   return invoke("set_low_gpu_mode", { args: { enabled } });
+}
+
+export function setLauncherOrder(order: string[]): Promise<ConfigSnapshot> {
+  return invoke("set_launcher_order", { args: { order } });
+}
+
+export function setToolHidden(
+  name: string,
+  hidden: boolean,
+): Promise<ConfigSnapshot> {
+  return invoke("set_tool_hidden", { args: { name, hidden } });
 }
 
 // PTY -------------------------------------------------------------------------

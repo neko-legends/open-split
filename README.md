@@ -1,6 +1,6 @@
 # OpenSplit
 
-OpenSplit is a fast, cross-platform terminal harness for AI coding agents and developer shells. Launch opencode, codex, claude, kimi-cli, aider, or any shell — then right-click to split panes horizontally or vertically, drag to resize, switch tools mid-session without losing context, and inherit your SSH session into every new split.
+OpenSplit is a fast, cross-platform terminal harness for AI coding agents and developer shells. Launch opencode, codex, claude, grok-build, hermes, kimi-cli, aider, or any shell — then right-click to split panes horizontally or vertically, drag to resize, switch tools mid-session without losing context, and inherit your SSH session into every new split.
 
 Built with Rust + Tauri 2 + Svelte 5 + xterm.js. Ships as a single native binary on Windows, with Linux and macOS builds possible from source.
 
@@ -8,7 +8,7 @@ Built with Rust + Tauri 2 + Svelte 5 + xterm.js. Ships as a single native binary
 
 ![Launcher picker — auto-detects installed AI tools on first launch](sc.webp)
 
-*Launcher picker: OpenSplit detects installed AI tools (opencode, Codex, Claude Code, Gemini CLI, Kimi Code, and your system shell) and presents them as a keyboard-navigable grid. Press 1–6 to quick-pick, or check "Remember this as my default" to skip the picker next time.*
+*Launcher picker: OpenSplit detects installed AI tools (opencode, Codex, Claude Code, Gemini CLI, Grok Build, Hermes, Kimi Code, and your system shell) and presents them as a keyboard-navigable grid. Press 1–9 to quick-pick, or check "Remember this as my default" to skip the picker next time.*
 
 ![Three-pane split — opencode, Codex, and Hermes running side by side](sc2.webp)
 
@@ -33,6 +33,8 @@ Before running a downloaded binary, compare its SHA256 hash against the value in
 - [opencode](https://opencode.ai)
 - [Codex CLI](https://github.com/openai/codex)
 - [Claude Code](https://claude.ai/code)
+- [Grok Build](https://x.ai/cli) (`grok-build`)
+- [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli)
 - [Kimi Code](https://kimi.moonshot.cn) (`kimi-cli`)
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 - [aider](https://aider.chat)

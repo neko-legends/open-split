@@ -28,6 +28,13 @@ struct Candidate {
 /// The static catalog. Order here is the order shown in the picker.
 const CATALOG: &[Candidate] = &[
     Candidate {
+        name: "shell",
+        label: "Default Terminal",
+        description: "System shell (PowerShell / bash / zsh)",
+        icon: "terminal",
+        binaries: &[], // resolved specially; see default_shell_*
+    },
+    Candidate {
         name: "opencode",
         label: "opencode",
         description: "Open-source AI coding agent",
@@ -54,6 +61,20 @@ const CATALOG: &[Candidate] = &[
         description: "Google Gemini coding agent",
         icon: "ai",
         binaries: &["gemini"],
+    },
+    Candidate {
+        name: "grok",
+        label: "Grok Build",
+        description: "xAI coding agent and CLI",
+        icon: "ai",
+        binaries: &["grok-build", "grok"],
+    },
+    Candidate {
+        name: "hermes",
+        label: "Hermes",
+        description: "Nous Research Hermes Agent",
+        icon: "ai",
+        binaries: &["hermes"],
     },
     Candidate {
         name: "aider",
@@ -83,13 +104,6 @@ const CATALOG: &[Candidate] = &[
         description: "ChatGPT in your shell",
         icon: "ai",
         binaries: &["sgpt"],
-    },
-    Candidate {
-        name: "shell",
-        label: "Default Terminal",
-        description: "System shell (PowerShell / bash / zsh)",
-        icon: "terminal",
-        binaries: &[], // resolved specially; see default_shell_*
     },
 ];
 
@@ -122,7 +136,9 @@ pub struct DetectedTool {
 ///
 /// User profiles whose command doesn't appear in the catalog are appended at
 /// the end so user-defined launchers show up in the picker too.
-pub fn detect_all(profiles: &std::collections::HashMap<String, crate::config::Profile>) -> Vec<DetectedTool> {
+pub fn detect_all(
+    profiles: &std::collections::HashMap<String, crate::config::Profile>,
+) -> Vec<DetectedTool> {
     let mut out: Vec<DetectedTool> = Vec::new();
 
     for cand in CATALOG {
@@ -215,5 +231,7 @@ fn default_shell_path() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    which("zsh").or_else(|| which("bash")).or_else(|| which("sh"))
+    which("zsh")
+        .or_else(|| which("bash"))
+        .or_else(|| which("sh"))
 }

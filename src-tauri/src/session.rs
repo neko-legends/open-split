@@ -92,10 +92,7 @@ pub fn foreground(root_pid: u32) -> Option<ForegroundInfo> {
         .collect();
     let cwd = proc_.cwd().map(|p| p.display().to_string());
 
-    let stem = name
-        .to_lowercase()
-        .trim_end_matches(".exe")
-        .to_string();
+    let stem = name.to_lowercase().trim_end_matches(".exe").to_string();
     let is_ssh = stem == "ssh";
 
     Some(ForegroundInfo {
