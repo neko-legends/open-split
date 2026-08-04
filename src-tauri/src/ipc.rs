@@ -253,7 +253,8 @@ pub fn list_profiles(state: State<'_, Arc<AppState>>) -> Vec<ProfileSummary> {
 pub struct ConfigSnapshot {
     pub default_profile: Option<String>,
     pub ssh_inherit: bool,
-    pub low_gpu_mode: bool,
+    /// Terminal repaint throttle interval in milliseconds. `0` disables it.
+    pub low_gpu_update_ms: u32,
     pub launcher_order: Vec<String>,
     pub hidden_tools: Vec<String>,
     pub config_path: Option<String>,
@@ -265,7 +266,7 @@ pub fn get_config(state: State<'_, Arc<AppState>>) -> ConfigSnapshot {
     ConfigSnapshot {
         default_profile: cfg.default_profile.clone(),
         ssh_inherit: cfg.ssh_inherit,
-        low_gpu_mode: cfg.low_gpu_mode,
+        low_gpu_update_ms: cfg.low_gpu_update_ms,
         launcher_order: cfg.launcher_order.clone(),
         hidden_tools: cfg.hidden_tools.clone(),
         config_path: config::config_path().map(|p| p.display().to_string()),
@@ -310,18 +311,19 @@ pub fn set_ssh_inherit(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SetLowGpuModeArgs {
-    pub enabled: bool,
+pub struct SetLowGpuUpdateMsArgs {
+    /// New throttle interval in milliseconds. `0` disables throttling.
+    pub low_gpu_update_ms: u32,
 }
 
 #[tauri::command]
-pub fn set_low_gpu_mode(
+pub fn set_low_gpu_update_ms(
     state: State<'_, Arc<AppState>>,
-    args: SetLowGpuModeArgs,
+    args: SetLowGpuUpdateMsArgs,
 ) -> Result<ConfigSnapshot, String> {
     {
         let mut cfg = state.config.write();
-        cfg.low_gpu_mode = args.enabled;
+        cfg.low_gpu_update_ms = args.low_gpu_update_ms;
         cfg.save().map_err(err)?;
     }
     Ok(get_config(state))

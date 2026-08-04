@@ -32,7 +32,12 @@ export type StartupAction =
 export interface ConfigSnapshot {
   default_profile: string | null;
   ssh_inherit: boolean;
-  low_gpu_mode: boolean;
+  /**
+   * Terminal repaint throttle interval in milliseconds. `0` disables
+   * throttling (full-speed repaints). Otherwise output is coalesced and
+   * flushed at most once every this many ms (lower GPU usage).
+   */
+  low_gpu_update_ms: number;
   launcher_order: string[];
   hidden_tools: string[];
   config_path: string | null;
@@ -108,8 +113,12 @@ export function setSshInherit(enabled: boolean): Promise<ConfigSnapshot> {
   return invoke("set_ssh_inherit", { args: { enabled } });
 }
 
-export function setLowGpuMode(enabled: boolean): Promise<ConfigSnapshot> {
-  return invoke("set_low_gpu_mode", { args: { enabled } });
+/**
+ * Set the terminal repaint throttle interval. `0` disables throttling.
+ * Values like 250 / 500 / 1000 cap repaint frequency to that many ms.
+ */
+export function setLowGpuUpdateMs(lowGpuUpdateMs: number): Promise<ConfigSnapshot> {
+  return invoke("set_low_gpu_update_ms", { args: { low_gpu_update_ms: lowGpuUpdateMs } });
 }
 
 export function setLauncherOrder(order: string[]): Promise<ConfigSnapshot> {

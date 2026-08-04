@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { DetectedTool } from "../lib/ipc";
   import {
     WINDOW_SIZE_PRESETS,
@@ -40,6 +41,83 @@
   let switchOpen = $state(false);
   let sizeOpen = $state(false);
 
+  // --- Smart positioning -----------------------------------------------------
+  // The menu is `position: fixed` at the raw click point (x, y). When opened
+  // near the window's right or bottom edge, parts of it would render off-screen
+  // and be unreachable. After mount we measure the rendered size and shift the
+  // menu so the whole thing stays inside the viewport. We also decide whether
+  // the submenus should "flip" to open leftward instead of rightward when there
+  // isn't room to the right.
+  let menuEl = $state<HTMLDivElement | null>(null);
+  // Seed with the click point; the $effect below re-clamps on every open.
+  // untrack avoids the "captures initial value" lint while still giving us a
+  // sane first paint before measurement runs.
+  let posX = $state(untrack(() => x));
+  let posY = $state(untrack(() => y));
+  let submenuFlip = $state(false);
+  /** Hidden until we've measured + clamped, to avoid a 1-frame flash at the
+   *  raw click point near an edge. */
+  let positioned = $state(false);
+
+  /** Minimum clear pixels we want on the right before opening a submenu there. */
+  const SUBMENU_CLEARANCE_PX = 200;
+
+  $effect(() => {
+    // Re-run whenever the requested anchor changes (a new menu open).
+    void x;
+    void y;
+    const el = menuEl;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const w = rect.width;
+    const h = rect.height;
+
+    // Horizontal: shift left if the menu would overflow the right edge.
+    let nx = x;
+    if (x + w > vw) nx = Math.max(0, vw - w);
+    // Vertical: shift up if the menu would overflow the bottom edge.
+    let ny = y;
+    if (y + h > vh) ny = Math.max(0, vh - h);
+
+    posX = nx;
+    posY = ny;
+
+    // Submenu direction: open to the right by default. Flip to the left when
+    // there isn't enough clearance between the menu's right edge and the window.
+    submenuFlip = vw - (nx + w) < SUBMENU_CLEARANCE_PX;
+    positioned = true;
+  });
+
+  /**
+   * Svelte action applied to each submenu panel: when it opens we clamp it
+   * vertically so a tall list (e.g. many size presets) never overflows past the
+   * bottom edge. Keeps `top` aligned with its trigger but raises the panel and,
+   * if still too tall, makes it scroll.
+   */
+  function clampSubmenu(node: HTMLElement) {
+    const clamp = () => {
+      const rect = node.getBoundingClientRect();
+      const overflow = rect.bottom - window.innerHeight;
+      if (overflow > 0) {
+        const newTop = Math.max(0, rect.top - overflow);
+        node.style.top = `${newTop}px`;
+        // If even pinned to the top it's taller than the viewport, let it scroll.
+        node.style.maxHeight = `${Math.max(160, window.innerHeight - newTop - 8)}px`;
+        node.style.overflowY = "auto";
+      }
+    };
+    clamp();
+    const onResize = () => clamp();
+    window.addEventListener("resize", onResize);
+    return {
+      destroy() {
+        window.removeEventListener("resize", onResize);
+      },
+    };
+  }
+
   /** Tools that can be switched to: all launchable ones. */
   let switchTargets = $derived(
     availableTools.filter((t) => t.name === "shell" || t.path !== null)
@@ -72,8 +150,11 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="ctx-menu"
-  style:left="{x}px"
-  style:top="{y}px"
+  bind:this={menuEl}
+  style:left="{posX}px"
+  style:top="{posY}px"
+  class:submenu-flip={submenuFlip}
+  class:hidden={!positioned}
   onclick={(e) => e.stopPropagation()}
   oncontextmenu={(e) => e.preventDefault()}
 >
@@ -152,7 +233,7 @@
       </div>
 
       {#if switchOpen}
-        <div class="submenu">
+        <div class="submenu" use:clampSubmenu>
           {#each switchTargets as tool (tool.name)}
             <button
               type="button"
@@ -211,7 +292,7 @@
     </div>
 
     {#if sizeOpen}
-      <div class="submenu size-submenu">
+      <div class="submenu size-submenu" use:clampSubmenu>
         {#each sizeGroups as group (group.name)}
           <div class="submenu-heading">{group.name}</div>
           {#each group.presets as preset (preset.id)}
@@ -260,6 +341,11 @@
     padding: 4px;
     min-width: 220px;
     user-select: none;
+  }
+  /* Held invisible for one frame while we measure + clamp position so the menu
+     never visibly flashes at the raw click point before relocating. */
+  .ctx-menu.hidden {
+    visibility: hidden;
   }
   .item {
     display: grid;
@@ -316,6 +402,12 @@
     padding: 4px;
     min-width: 180px;
     z-index: 1001;
+  }
+  /* When the menu is anchored near the right edge there's no room for the
+     submenu to open to the right, so flip it to open on the left side. */
+  .submenu-flip .submenu {
+    left: auto;
+    right: 100%;
   }
   .size-submenu {
     min-width: 220px;

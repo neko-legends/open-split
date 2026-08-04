@@ -14,8 +14,11 @@ default_profile = "opencode"
 # OpenSSH ControlMaster socket). Set to false to always launch the fallback.
 ssh_inherit = true
 
-# Reduce terminal repaint frequency to once per second.
-low_gpu_mode = true
+# Cap how often terminal output repaints, in milliseconds. Lower values feel
+# more responsive but use more GPU; higher values reduce GPU load. Set to 0 to
+# repaint at full speed. Common values: 0, 250, 500, 1000.
+# (Backward compatible: the legacy boolean `low_gpu_mode = true` maps to 1000.)
+low_gpu_update_ms = 1000
 
 # Profiles -------------------------------------------------------------------
 # Each profile is `[profiles.<name>]` with:

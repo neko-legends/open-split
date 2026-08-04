@@ -6,10 +6,10 @@
     getConfig,
     getVersion,
     setDefaultProfile,
-    setLowGpuMode,
+    setLowGpuUpdateMs,
     setSshInherit,
   } from "../lib/ipc";
-  import { setTerminalLowGpuMode } from "../lib/terminalInstances";
+  import { setTerminalLowGpuUpdateMs } from "../lib/terminalInstances";
 
   interface Props {
     onClose: () => void;
@@ -30,7 +30,7 @@
     try {
       const [c, t, v] = await Promise.all([getConfig(), detectTools(), getVersion()]);
       config = c;
-      setTerminalLowGpuMode(c.low_gpu_mode);
+      setTerminalLowGpuUpdateMs(c.low_gpu_update_ms);
       tools = t;
       version = v;
     } catch (e) {
@@ -68,12 +68,24 @@
     }
   }
 
-  async function toggleLowGpuMode() {
+  /**
+   * Available repaint throttle intervals. `0` disables throttling (full-speed
+   * repaints); the others coalesce output and repaint at most that often, which
+   * lowers GPU/composite load on lower-end hardware.
+   */
+  const RENDER_INTERVAL_OPTIONS: { value: number; label: string }[] = [
+    { value: 0, label: "Off (full speed)" },
+    { value: 250, label: "0.25s" },
+    { value: 500, label: "0.5s" },
+    { value: 1000, label: "1s" },
+  ];
+
+  async function changeRenderInterval(ev: Event) {
     if (!config) return;
-    const enabled = !config.low_gpu_mode;
+    const value = Number((ev.target as HTMLSelectElement).value);
     try {
-      config = await setLowGpuMode(enabled);
-      setTerminalLowGpuMode(config.low_gpu_mode);
+      config = await setLowGpuUpdateMs(value);
+      setTerminalLowGpuUpdateMs(config.low_gpu_update_ms);
     } catch (e) {
       error = String(e);
     }
@@ -191,16 +203,24 @@
 
       <section class="section">
         <h3>Rendering</h3>
-        <label class="toggle">
-          <input
-            type="checkbox"
-            checked={config.low_gpu_mode}
-            onchange={toggleLowGpuMode}
-          />
-          <span>
-            Low GPU mode: update terminal output once per second.
-          </span>
-        </label>
+        <div class="select-row">
+          <label class="select-label" for="render-interval">Update rate</label>
+          <select
+            id="render-interval"
+            class="select"
+            value={config.low_gpu_update_ms}
+            onchange={changeRenderInterval}
+          >
+            {#each RENDER_INTERVAL_OPTIONS as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+        </div>
+        <p class="hint">
+          Caps how often terminal output repaints. Lower intervals feel more
+          responsive but use more GPU; higher intervals reduce GPU load. Has no
+          effect while a pane is actively receiving your keystrokes.
+        </p>
       </section>
 
       <section class="section">
@@ -367,6 +387,33 @@
   .toggle input {
     margin-top: 2px;
     accent-color: var(--accent);
+  }
+  .select-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .select-label {
+    font-size: 12px;
+    color: var(--fg);
+  }
+  .select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    min-width: 140px;
+  }
+  .select:hover {
+    border-color: var(--border-active);
+  }
+  .select:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   .ghost {
     background: transparent;

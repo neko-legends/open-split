@@ -105,7 +105,7 @@ pub fn run() {
             ipc::get_config,
             ipc::set_default_profile,
             ipc::set_ssh_inherit,
-            ipc::set_low_gpu_mode,
+            ipc::set_low_gpu_update_ms,
             ipc::set_launcher_order,
             ipc::set_tool_hidden,
             ipc::spawn_pane,

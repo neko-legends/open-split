@@ -34,7 +34,7 @@
     getSelection,
     noteTerminalUserInput,
     pasteToInstance,
-    setTerminalLowGpuMode,
+    setTerminalLowGpuUpdateMs,
     writeToInstance,
   } from "../lib/terminalInstances";
   import {
@@ -107,7 +107,7 @@
         getToolsCached(),
       ]);
       const cfg = await getConfig();
-      setTerminalLowGpuMode(cfg.low_gpu_mode);
+      setTerminalLowGpuUpdateMs(cfg.low_gpu_update_ms);
       availableTools = tools;
       if (action.kind === "launch") {
         await spawnFromSpec(action.spec);

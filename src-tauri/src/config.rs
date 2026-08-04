@@ -14,6 +14,42 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Terminal repaint throttle interval, in milliseconds.
+///
+/// * `0`  — low-GPU mode disabled; the terminal repaints at full speed.
+/// * `N` — coalesce output writes and repaint at most once every `N` ms, which
+///   lowers GPU/composite load on lower-end hardware.
+///
+/// Stored as `u32` so the frontend can persist an exact interval. On load we
+/// also accept the legacy boolean form (`low_gpu_mode = true` maps to 1000ms)
+/// so existing config files keep working.
+pub type LowGpuUpdateMs = u32;
+
+/// Serde helper: accept either the new integer form or the legacy boolean.
+fn deserialize_low_gpu_update_ms<'de, D>(deserializer: D) -> Result<LowGpuUpdateMs, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum LegacyOrInt {
+        Int(u32),
+        Bool(bool),
+    }
+
+    match Option::<LegacyOrInt>::deserialize(deserializer)? {
+        Some(LegacyOrInt::Int(n)) => Ok(n),
+        Some(LegacyOrInt::Bool(true)) => Ok(1000),
+        Some(LegacyOrInt::Bool(false)) => Ok(0),
+        None => Ok(1000),
+    }
+}
+
+/// Default value used when the key is absent from the TOML file.
+fn default_low_gpu_update_ms() -> LowGpuUpdateMs {
+    1000
+}
+
 /// Top-level config schema.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -30,9 +66,15 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub ssh_inherit: bool,
 
-    /// Reduce terminal repaint frequency for lower GPU usage.
-    #[serde(default = "default_true")]
-    pub low_gpu_mode: bool,
+    /// Terminal repaint throttle interval in milliseconds. `0` disables
+    /// throttling (full-speed repaints). Backward compatible with the legacy
+    /// `low_gpu_mode` boolean via [`deserialize_low_gpu_update_ms`].
+    #[serde(
+        default = "default_low_gpu_update_ms",
+        deserialize_with = "deserialize_low_gpu_update_ms",
+        skip_serializing_if = "is_low_gpu_update_ms_default"
+    )]
+    pub low_gpu_update_ms: LowGpuUpdateMs,
 
     /// User-defined launcher tile order. Unknown entries are ignored by the
     /// frontend; newly detected tools are appended after the saved order.
@@ -53,6 +95,12 @@ pub struct Config {
 
 fn default_true() -> bool {
     true
+}
+
+/// `skip_serializing_if` predicate: only omit the field when it equals the
+/// default (1000ms). Keeps generated config files tidy.
+fn is_low_gpu_update_ms_default(v: &LowGpuUpdateMs) -> bool {
+    *v == default_low_gpu_update_ms()
 }
 
 /// One launchable command preset.
@@ -78,7 +126,7 @@ impl Config {
         Self {
             default_profile: None,
             ssh_inherit: true,
-            low_gpu_mode: true,
+            low_gpu_update_ms: default_low_gpu_update_ms(),
             launcher_order: Vec::new(),
             hidden_tools: Vec::new(),
             profiles: HashMap::new(),

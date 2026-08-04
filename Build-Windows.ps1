@@ -57,6 +57,28 @@ function Invoke-Npm {
     if ($LASTEXITCODE -ne 0) { throw "npm exited with code $LASTEXITCODE" }
 }
 
+function Get-Sha256Hash {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path
+    )
+
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    $stream = [System.IO.File]::OpenRead($resolvedPath)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha256.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($bytes) -replace "-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 # --- Install JS deps if needed ------------------------------------------
 
 if (-not (Test-Path "node_modules")) {
@@ -96,7 +118,7 @@ Remove-Item "$releaseOutDir\OpenSplit_*_x64_en-US.msi" -Force -ErrorAction Silen
 Remove-Item "$releaseOutDir\OpenSplit_*_x64_en-US.msi.sha256" -Force -ErrorAction SilentlyContinue
 
 if (Test-Path $exeSrc) {
-    $hash = (Get-FileHash $exeSrc -Algorithm SHA256).Hash.ToLower()
+    $hash = Get-Sha256Hash $exeSrc
     $destExe  = "$releaseOutDir\opensplit-$version-windows-x64.exe"
     $destHash = "$releaseOutDir\opensplit-$version-windows-x64.exe.sha256"
 
@@ -109,7 +131,7 @@ if (Test-Path $exeSrc) {
         Copy-Item $exeSrc $destExe -Force
         Write-Warning "Default portable exe was locked; wrote timestamped build instead."
     }
-    $hash = (Get-FileHash $destExe -Algorithm SHA256).Hash.ToLower()
+    $hash = Get-Sha256Hash $destExe
     Set-Content $destHash "$hash  $(Split-Path $destExe -Leaf)" -Encoding ASCII
 
     Write-Host ""
@@ -132,7 +154,7 @@ if ($bundleItems) {
     Write-Host ""
     Write-Host "Installer bundles:" -ForegroundColor Cyan
     $bundleItems | ForEach-Object {
-        $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+        $h = Get-Sha256Hash $_.FullName
         $dest = Join-Path $releaseOutDir $_.Name
         Copy-Item $_.FullName $dest -Force
         Set-Content "$dest.sha256" "$h  $($_.Name)" -Encoding ASCII

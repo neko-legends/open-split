@@ -69,13 +69,17 @@ const XTERM_THEME = {
 const OSC52_CLIPBOARD_TARGETS = new Set(["c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
 const OSC52_MAX_DECODED_BYTES = 4 * 1024 * 1024;
 const VISIBLE_OUTPUT_FLUSH_MS = 66;
-const LOW_GPU_OUTPUT_FLUSH_MS = 1000;
 const INTERACTIVE_OUTPUT_FLUSH_MS = 16;
 const INTERACTIVE_GRACE_MS = 500;
 const HIDDEN_OUTPUT_FLUSH_MS = 250;
 const MAX_PENDING_OUTPUT_CHARS = 4 * 1024 * 1024;
 let visibilityFlushInstalled = false;
-let lowGpuMode = false;
+/**
+ * User-configured repaint throttle interval in ms. `0` disables throttling
+ * (full-speed repaints via the visible/hidden intervals). Otherwise output is
+ * coalesced and flushed at most once every this many ms — reduces GPU load.
+ */
+let lowGpuUpdateMs = 0;
 
 function decodeOsc52Payload(data: string): string | null {
   const semicolon = data.indexOf(";");
@@ -117,14 +121,16 @@ function installOsc52ClipboardHandler(term: Terminal): void {
 }
 
 function outputFlushIntervalMs(): number {
-  if (lowGpuMode) return LOW_GPU_OUTPUT_FLUSH_MS;
+  if (lowGpuUpdateMs > 0) return lowGpuUpdateMs;
   return document.visibilityState === "hidden"
     ? HIDDEN_OUTPUT_FLUSH_MS
     : VISIBLE_OUTPUT_FLUSH_MS;
 }
 
 function instanceFlushIntervalMs(inst: TerminalInstance): number {
-  if (lowGpuMode && performance.now() < inst.interactiveUntil) {
+  // While throttled, briefly speed up after user keystrokes so typing still
+  // feels responsive, then fall back to the throttle interval.
+  if (lowGpuUpdateMs > 0 && performance.now() < inst.interactiveUntil) {
     return INTERACTIVE_OUTPUT_FLUSH_MS;
   }
   return outputFlushIntervalMs();
@@ -184,9 +190,15 @@ function installVisibilityFlush(): void {
   });
 }
 
-export function setTerminalLowGpuMode(enabled: boolean): void {
-  lowGpuMode = enabled;
-  if (!enabled) {
+/**
+ * Update the repaint throttle interval. Pass `0` to disable throttling
+ * (full-speed repaints). Any positive value caps repaint frequency to that
+ * many ms between flushes. When throttling is turned off we immediately flush
+ * any buffered output so nothing is left waiting.
+ */
+export function setTerminalLowGpuUpdateMs(intervalMs: number): void {
+  lowGpuUpdateMs = Math.max(0, Math.floor(intervalMs));
+  if (lowGpuUpdateMs === 0) {
     for (const inst of instances.values()) {
       flushPendingOutput(inst);
     }
