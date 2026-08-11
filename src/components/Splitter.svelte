@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SplitDirection } from "../lib/PaneTree";
+  import { beginSplitDrag, endSplitDrag } from "../lib/splitDrag";
 
   interface Props {
     direction: SplitDirection;
@@ -14,6 +15,9 @@
   function startDrag(ev: PointerEvent) {
     if (!containerEl) return;
     dragging = true;
+    // Signal Terminals to skip their (expensive, scrollback-reflowing) fit
+    // until we release — see splitDrag.ts. Commit one fit on drag end.
+    beginSplitDrag();
     (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
     ev.preventDefault();
   }
@@ -35,6 +39,8 @@
     if (!dragging) return;
     dragging = false;
     (ev.currentTarget as HTMLElement).releasePointerCapture(ev.pointerId);
+    // Releases the deferred-fit: each Terminal runs one fit + PTY resize now.
+    endSplitDrag();
   }
 </script>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { resizePane } from "../lib/ipc";
+  import { isSplitDragging, onSplitDragEnd } from "../lib/splitDrag";
   import {
     attach,
     detach,
@@ -28,10 +29,17 @@
 
   function scheduleFit() {
     if (disposed) return;
+    // Defer while a splitter divider is being dragged. term.resize() reflows
+    // the whole scrollback (O(lines)), so running it per-pointermove frame
+    // freezes the app once scrollback fills up. We run a single fit on drag
+    // end instead — see splitDrag.ts.
+    if (isSplitDragging()) return;
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = 0;
       if (disposed) return;
+      // A drag may have started between scheduling and the frame firing.
+      if (isSplitDragging()) return;
       const fitted = fitInstance(paneId);
       if (!fitted) return;
       const dims = getDimensions(paneId);
@@ -42,6 +50,8 @@
       }
     });
   }
+
+  let unsubSplitDragEnd: (() => void) | null = null;
 
   onMount(() => {
     if (!hostEl) return;
@@ -56,6 +66,10 @@
     });
     resizeObserver.observe(hostEl);
     scheduleFit();
+
+    // When a splitter drag ends, run the single deferred fit we suppressed
+    // during the drag.
+    unsubSplitDragEnd = onSplitDragEnd(() => scheduleFit());
   });
 
   onDestroy(() => {
@@ -64,6 +78,8 @@
     resizeRaf = 0;
     try { resizeObserver?.disconnect(); } catch {}
     resizeObserver = null;
+    unsubSplitDragEnd?.();
+    unsubSplitDragEnd = null;
     // Detach from this host, but keep the xterm instance alive.
     detach(paneId);
   });
