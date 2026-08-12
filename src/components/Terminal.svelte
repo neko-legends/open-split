@@ -7,6 +7,7 @@
     detach,
     fitInstance,
     getDimensions,
+    scrollInstanceToBottom,
   } from "../lib/terminalInstances";
 
   /**
@@ -26,14 +27,22 @@
   let resizeObserver: ResizeObserver | null = null;
   let resizeRaf = 0;
   let disposed = false;
+  /**
+   * Set when a fit is triggered by a splitter drag release. After the fit
+   * (which reflows scrollback) we scroll the viewport back to the bottom so
+   * the pane shows its latest output/prompt instead of an arbitrary post-
+   * reflow scroll position.
+   */
+  let scrollAfterNextFit = false;
 
-  function scheduleFit() {
+  function scheduleFit(opts?: { scrollToEnd?: boolean }) {
     if (disposed) return;
     // Defer while a splitter divider is being dragged. term.resize() reflows
     // the whole scrollback (O(lines)), so running it per-pointermove frame
     // freezes the app once scrollback fills up. We run a single fit on drag
     // end instead — see splitDrag.ts.
     if (isSplitDragging()) return;
+    if (opts?.scrollToEnd) scrollAfterNextFit = true;
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = 0;
@@ -41,7 +50,14 @@
       // A drag may have started between scheduling and the frame firing.
       if (isSplitDragging()) return;
       const fitted = fitInstance(paneId);
-      if (!fitted) return;
+      if (!fitted) {
+        scrollAfterNextFit = false;
+        return;
+      }
+      if (scrollAfterNextFit) {
+        scrollAfterNextFit = false;
+        scrollInstanceToBottom(paneId);
+      }
       const dims = getDimensions(paneId);
       if (dims && dims.cols > 0 && dims.rows > 0) {
         void resizePane(paneId, dims.cols, dims.rows).catch(() => {
@@ -68,8 +84,8 @@
     scheduleFit();
 
     // When a splitter drag ends, run the single deferred fit we suppressed
-    // during the drag.
-    unsubSplitDragEnd = onSplitDragEnd(() => scheduleFit());
+    // during the drag, then snap each pane back to its latest output.
+    unsubSplitDragEnd = onSplitDragEnd(() => scheduleFit({ scrollToEnd: true }));
   });
 
   onDestroy(() => {

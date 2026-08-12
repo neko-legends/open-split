@@ -380,6 +380,22 @@ export function getDimensions(paneId: string): { cols: number; rows: number } | 
   return { cols: inst.term.cols, rows: inst.term.rows };
 }
 
+/**
+ * Scroll the terminal viewport to the bottom (most recent line). Viewport-only
+ * — does NOT send input to the PTY, so it's safe even when a TUI app (vim,
+ * less, htop) is running. Used after a splitter drag so each pane snaps back to
+ * its prompt instead of sitting at an arbitrary post-reflow scroll position.
+ */
+export function scrollInstanceToBottom(paneId: string): void {
+  const inst = instances.get(paneId);
+  if (!inst?.opened) return;
+  try {
+    inst.term.scrollToBottom();
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Fully destroy an instance (call when pane is closed, not just unmounted). */
 export function destroyInstance(paneId: string): void {
   const inst = instances.get(paneId);
