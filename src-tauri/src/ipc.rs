@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     config::{self, Config, LaunchSpec},
@@ -97,8 +97,11 @@ pub enum StartupAction {
     },
 }
 
+/// Runs on the async runtime (not the UI thread): may scan PATH via
+/// `detect_all`, which is filesystem-bound and can take hundreds of ms.
 #[tauri::command]
-pub fn get_startup_action(state: State<'_, Arc<AppState>>) -> StartupAction {
+pub async fn get_startup_action(app: AppHandle) -> StartupAction {
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let cfg = state.config.read();
 
     // 1. CLI override always wins.
@@ -155,8 +158,11 @@ pub fn get_startup_action(state: State<'_, Arc<AppState>>) -> StartupAction {
 /// synthesizes from the platform default (pwsh → powershell → cmd on Windows;
 /// $SHELL → bash → sh on Unix). The returned spec always sets `cwd` to the
 /// caller-supplied directory so the shell opens in the right place.
+/// Runs on the async runtime: falls back to a PATH scan (`detect_all`) when
+/// no "shell" profile is configured, which is the default.
 #[tauri::command]
-pub fn get_shell_spec(state: State<'_, Arc<AppState>>, cwd: Option<String>) -> LaunchSpec {
+pub async fn get_shell_spec(app: AppHandle, cwd: Option<String>) -> LaunchSpec {
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let cfg = state.config.read();
     // Prefer the user's explicit "shell" profile.
     if let Some(mut spec) = config::profile_to_spec(&cfg, "shell") {
@@ -203,8 +209,10 @@ fn default_shell_args() -> Vec<String> {
 
 /// Re-scan PATH for installed tools. Invalidates + rebuilds the cache.
 /// Called by the Settings panel Refresh button and the initial boot.
+/// Runs on the async runtime: full PATH×PATHEXT filesystem scan.
 #[tauri::command]
-pub fn detect_tools(state: State<'_, Arc<AppState>>) -> Vec<DetectedTool> {
+pub async fn detect_tools(app: AppHandle) -> Vec<DetectedTool> {
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let cfg = state.config.read();
     let tools = detect::detect_all(&cfg.profiles);
     *state.cached_tools.lock() = Some(tools.clone());
@@ -214,8 +222,10 @@ pub fn detect_tools(state: State<'_, Arc<AppState>>) -> Vec<DetectedTool> {
 /// Return cached detection results without re-scanning. If no cache exists yet
 /// (e.g. right-click before Settings was opened), scans once and caches.
 /// Used by the context menu switch submenu so right-clicking is instant.
+/// Runs on the async runtime: the cold path performs a PATH scan.
 #[tauri::command]
-pub fn get_tools_cached(state: State<'_, Arc<AppState>>) -> Vec<DetectedTool> {
+pub async fn get_tools_cached(app: AppHandle) -> Vec<DetectedTool> {
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let mut cache = state.cached_tools.lock();
     if let Some(ref tools) = *cache {
         return tools.clone();
@@ -417,12 +427,16 @@ pub struct SpawnPaneResult {
     pub spec: LaunchSpec,
 }
 
+/// Runs on the async runtime: program resolution touches the filesystem
+/// (PATH + PATHEXT probing) and spawning a ConPTY can block; doing this on
+/// the UI thread froze the whole window (keystrokes, output events, and all
+/// other invokes queue behind it).
 #[tauri::command]
-pub fn spawn_pane(
+pub async fn spawn_pane(
     app: AppHandle,
-    state: State<'_, Arc<AppState>>,
     args: SpawnPaneArgs,
 ) -> Result<SpawnPaneResult, String> {
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let spec = {
         let cfg = state.config.read();
         match args.source {
@@ -493,11 +507,16 @@ pub struct PaneForegroundArgs {
     pub pane_id: String,
 }
 
+/// Runs on the async runtime: `session::foreground` refreshes the entire
+/// process table (per-process cmd/cwd reads). It is called on every
+/// right-click (SSH detection) — on the UI thread a slow sweep froze the
+/// whole app.
 #[tauri::command]
-pub fn pane_foreground_info(
-    state: State<'_, Arc<AppState>>,
+pub async fn pane_foreground_info(
+    app: AppHandle,
     args: PaneForegroundArgs,
 ) -> Result<Option<session::ForegroundInfo>, String> {
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let pane = pty::require(&state.panes, &args.pane_id).map_err(err)?;
     let pid = match pane.child_pid() {
         Some(p) => p,
@@ -520,42 +539,52 @@ pub struct ResolveSplitSpecResult {
     pub source_foreground: Option<session::ForegroundInfo>,
 }
 
+/// Runs on the async runtime: performs the full process-table sweep that
+/// `session::foreground` needs (see `pane_foreground_info`).
 #[tauri::command]
-pub fn resolve_split_spec(
-    state: State<'_, Arc<AppState>>,
+pub async fn resolve_split_spec(
+    app: AppHandle,
     args: ResolveSplitSpecArgs,
 ) -> Result<ResolveSplitSpecResult, String> {
-    let cfg = state.config.read();
-    let inherit_enabled = cfg.ssh_inherit;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    // Resolve everything we need from the config, then DROP the read lock
+    // before the (slow) process scan — otherwise every `set_*` command
+    // blocks for the whole sweep.
+    let (inherit_enabled, fallback) = {
+        let cfg = state.config.read();
+        let inherit_enabled = cfg.ssh_inherit;
 
-    let fallback = if let Some(name) = args.fallback_profile.as_deref() {
-        // Try profile, then detection, then source pane's own spec.
-        if let Some(s) = config::profile_to_spec(&cfg, name) {
-            s
-        } else {
-            let detected = detect::detect_all(&cfg.profiles);
-            if let Some(tool) = detected.iter().find(|t| t.name == name) {
-                config::spec_for_detected(&cfg, name, tool.path.as_deref())
+        let fallback = if let Some(name) = args.fallback_profile.as_deref() {
+            // Try profile, then detection, then source pane's own spec.
+            if let Some(s) = config::profile_to_spec(&cfg, name) {
+                s
             } else {
-                state
-                    .panes
-                    .get(&args.source_pane_id)
-                    .map(|p| p.spec().clone())
-                    .unwrap_or_else(|| LaunchSpec {
-                        command: name.to_string(),
-                        args: vec![],
-                        cwd: None,
-                        env: Default::default(),
-                        profile: None,
-                    })
+                let detected = detect::detect_all(&cfg.profiles);
+                if let Some(tool) = detected.iter().find(|t| t.name == name) {
+                    config::spec_for_detected(&cfg, name, tool.path.as_deref())
+                } else {
+                    state
+                        .panes
+                        .get(&args.source_pane_id)
+                        .map(|p| p.spec().clone())
+                        .unwrap_or_else(|| LaunchSpec {
+                            command: name.to_string(),
+                            args: vec![],
+                            cwd: None,
+                            env: Default::default(),
+                            profile: None,
+                        })
+                }
             }
-        }
-    } else {
-        state
-            .panes
-            .get(&args.source_pane_id)
-            .map(|p| p.spec().clone())
-            .ok_or_else(|| format!("unknown source pane {}", args.source_pane_id))?
+        } else {
+            state
+                .panes
+                .get(&args.source_pane_id)
+                .map(|p| p.spec().clone())
+                .ok_or_else(|| format!("unknown source pane {}", args.source_pane_id))?
+        };
+
+        (inherit_enabled, fallback)
     };
 
     if !inherit_enabled {

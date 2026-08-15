@@ -8,8 +8,12 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        mpsc,
+        Arc,
+    },
     thread,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -20,6 +24,75 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::config::LaunchSpec;
+
+/// Cap on bytes coalesced into a single `pane:data` event.
+const MAX_EMIT_BATCH_BYTES: usize = 256 * 1024;
+/// Minimum spacing between `pane:data` events for one pane.
+const MIN_EMIT_INTERVAL: Duration = Duration::from_millis(4);
+
+/// Length of the longest prefix of `bytes` that should be emitted now,
+/// holding back a trailing incomplete UTF-8 sequence (max 3 bytes) so it can
+/// be completed by the next chunk.
+///
+/// Bytes that are genuinely invalid (not just truncated at the end) are
+/// emitted as-is and surface as U+FFFD via the lossy decode, matching the
+/// previous behavior.
+fn utf8_prefix_len(bytes: &[u8]) -> usize {
+    let valid = match std::str::from_utf8(bytes) {
+        Ok(_) => bytes.len(),
+        // Input ends mid-character: hold the partial tail back.
+        Err(err) => err.error_len().map_or(err.valid_up_to(), |_| bytes.len()),
+    };
+    // Walk back at most 3 bytes to the nearest start byte; if its sequence
+    // would run past `valid`, everything from it is a truncated character.
+    for cut in (valid.saturating_sub(3)..valid).rev() {
+        if let Some(need) = utf8_sequence_len(bytes[cut]) {
+            return if cut + need > valid { cut } else { valid };
+        }
+    }
+    valid
+}
+
+/// Declared length of the UTF-8 sequence that starts at `b`, or `None` if
+/// `b` is a continuation byte or not a valid start byte.
+fn utf8_sequence_len(b: u8) -> Option<usize> {
+    match b {
+        0x00..=0x7F => Some(1),
+        0xC0..=0xDF => Some(2),
+        0xE0..=0xEF => Some(3),
+        0xF0..=0xF7 => Some(4),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf8_prefix_len;
+
+    /// `─` (U+2500) = E2 94 80; `🀄` (U+1F004) = F0 9F 80 84.
+    #[test]
+    fn holds_back_partial_trailing_sequence() {
+        assert_eq!(utf8_prefix_len(&[b'a', 0xE2, 0x94]), 1);
+        assert_eq!(utf8_prefix_len(&[0xE2, 0x94]), 0);
+        assert_eq!(utf8_prefix_len(&[0xE2, 0x94, 0x80]), 3);
+        assert_eq!(utf8_prefix_len(&[0xF0, 0x9F, 0x80]), 0);
+        assert_eq!(utf8_prefix_len(&[0xF0, 0x9F, 0x80, 0x84]), 4);
+    }
+
+    #[test]
+    fn ascii_passes_through_untouched() {
+        assert_eq!(utf8_prefix_len(b"hello"), 5);
+        assert_eq!(utf8_prefix_len(&[]), 0);
+    }
+
+    #[test]
+    fn garbage_mid_stream_emits_but_keeps_split_tail() {
+        // Invalid 0xFF mid-stream, then a partial `─` cut at the chunk edge.
+        assert_eq!(utf8_prefix_len(&[b'a', 0xFF, 0xE2, 0x94]), 2);
+        // Lone invalid byte: emit it (lossy decode surfaces U+FFFD).
+        assert_eq!(utf8_prefix_len(&[0xFF]), 1);
+    }
+}
 
 /// Payload emitted to the frontend with PTY output for one pane.
 #[derive(Debug, Clone, Serialize)]
@@ -200,9 +273,18 @@ pub fn spawn(app: &AppHandle, spec: LaunchSpec, cols: u16, rows: u16) -> Result<
         spec,
     });
 
-    // Reader thread: drain master output → emit `pane:data`.
+    // Reader → emitter pipeline: drain master output → emit `pane:data`.
+    //
+    // The reader thread performs blocking PTY reads and forwards raw bytes
+    // over a channel; a separate emitter thread coalesces them into events.
+    // Each `app.emit` costs a JSON serialize plus an ExecuteScript hop
+    // through the UI thread, so emitting per-read flooded the event loop and
+    // made the app degrade under fast output (builds, `cat`, TUI redraws
+    // over SSH). The emitter also holds back a trailing partial UTF-8
+    // sequence so multi-byte characters (box drawing!) split across reads
+    // aren't corrupted into U+FFFD.
+    let (data_tx, data_rx) = mpsc::channel::<Vec<u8>>();
     {
-        let app = app.clone();
         let pane_id = id.clone();
         thread::Builder::new()
             .name(format!("opensplit-pty-{}", &id[..8]))
@@ -212,17 +294,11 @@ pub fn spawn(app: &AppHandle, spec: LaunchSpec, cols: u16, rows: u16) -> Result<
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            // xterm.js wants a string. Use lossy UTF-8 so partial
-                            // multi-byte sequences don't tank the stream; xterm
-                            // handles incremental escape parsing on its end.
-                            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                            let _ = app.emit(
-                                "pane:data",
-                                PaneDataEvent {
-                                    pane_id: pane_id.clone(),
-                                    chunk,
-                                },
-                            );
+                            // A send error only happens when the emitter is
+                            // gone (app shutting down) — stop reading.
+                            if data_tx.send(buf[..n].to_vec()).is_err() {
+                                break;
+                            }
                         }
                         Err(e) => {
                             tracing::debug!(pane = %pane_id, "pty reader error: {e}");
@@ -231,6 +307,67 @@ pub fn spawn(app: &AppHandle, spec: LaunchSpec, cols: u16, rows: u16) -> Result<
                     }
                 }
                 tracing::debug!(pane = %pane_id, "pty reader exited");
+            })
+            .ok();
+    }
+    {
+        let app = app.clone();
+        let pane_id = id.clone();
+        thread::Builder::new()
+            .name(format!("opensplit-emit-{}", &id[..8]))
+            .spawn(move || {
+                let mut pending: Vec<u8> = Vec::new();
+                loop {
+                    // Block until the first bytes arrive (or the reader exits).
+                    match data_rx.recv() {
+                        Ok(bytes) => pending.extend_from_slice(&bytes),
+                        Err(_) => {
+                            // Reader gone: flush what's left lossily — a
+                            // truncated final character can never be
+                            // completed anyway.
+                            if !pending.is_empty() {
+                                let chunk = String::from_utf8_lossy(&pending).into_owned();
+                                let _ = app.emit(
+                                    "pane:data",
+                                    PaneDataEvent {
+                                        pane_id: pane_id.clone(),
+                                        chunk,
+                                    },
+                                );
+                            }
+                            break;
+                        }
+                    }
+                    // Coalesce everything already queued, bounded by batch size.
+                    while pending.len() < MAX_EMIT_BATCH_BYTES {
+                        match data_rx.try_recv() {
+                            Ok(bytes) => pending.extend_from_slice(&bytes),
+                            Err(_) => break,
+                        }
+                    }
+                    // Emit the longest decodable prefix; a trailing partial
+                    // UTF-8 sequence stays in `pending` until the rest of
+                    // the character arrives.
+                    let emit_len = utf8_prefix_len(&pending);
+                    if emit_len > 0 {
+                        let chunk =
+                            String::from_utf8_lossy(&pending[..emit_len]).into_owned();
+                        let _ = app.emit(
+                            "pane:data",
+                            PaneDataEvent {
+                                pane_id: pane_id.clone(),
+                                chunk,
+                            },
+                        );
+                        pending.drain(..emit_len);
+                    }
+                    // Pace: even under sustained flood, at most one event per
+                    // interval keeps the UI-thread queue from growing
+                    // without bound. Interactive latency is unaffected —
+                    // the emit above happens before this sleep.
+                    thread::sleep(MIN_EMIT_INTERVAL);
+                }
+                tracing::debug!(pane = %pane_id, "pty emitter exited");
             })
             .ok();
     }

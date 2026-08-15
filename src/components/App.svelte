@@ -78,11 +78,12 @@
   let unlistenExit: UnlistenFn | null = null;
 
   /**
-   * PaneIds currently being switched via performSwitch. handlePaneExit checks
-   * this set and skips the shell-respawn for panes being deliberately replaced.
-   * Without this, closePane() in performSwitch triggers pane:exit, which fires
-   * handlePaneExit, which spawns a shell — racing with and overwriting the tool
-   * that performSwitch is about to launch.
+   * PaneIds currently being deliberately replaced or closed via
+   * performSwitch / performClose. handlePaneExit checks this set and skips
+   * the shell-respawn for panes we ourselves are killing. Without this,
+   * closePane() triggers pane:exit, which fires handlePaneExit, which spawns
+   * a shell — racing with and overwriting the tool that performSwitch is
+   * about to launch (or resurrecting a pane the user asked to close).
    */
   const switchingPanes = new Set<string>();
 
@@ -394,7 +395,12 @@
 
   async function performClose(paneId: string) {
     if (!tree) return;
-    try { await closePane(paneId); } catch {}
+    // Mark as deliberately closed BEFORE closePane so handlePaneExit ignores
+    // the pane:exit event the kill triggers. Without this, a fast exit event
+    // could race our tree update and respawn a fresh shell over this leaf —
+    // making "Close Pane" appear to not work.
+    switchingPanes.add(paneId);
+    try { await closePane(paneId); } catch { switchingPanes.delete(paneId); }
     destroyInstance(paneId);
 
     const leaf = findLeafByPaneId(tree, paneId);

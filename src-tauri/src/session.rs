@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{
+    Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind,
+};
 
 use crate::config::LaunchSpec;
 
@@ -36,8 +38,17 @@ pub struct ForegroundInfo {
 /// reliably for the common cases (shell → app, shell → ssh → remote shell on
 /// the local view stops at `ssh`).
 pub fn foreground(root_pid: u32) -> Option<ForegroundInfo> {
+    // Refresh ONLY the fields read below (name/exe, argv, cwd). The previous
+    // `ProcessRefreshKind::everything()` also collected per-process
+    // environments and disk counters — the most expensive part of the sweep
+    // on Windows (remote PEB reads) — for values nobody used.
     let mut sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
+        RefreshKind::new().with_processes(
+            ProcessRefreshKind::new()
+                .with_exe(UpdateKind::Always)
+                .with_cmd(UpdateKind::Always)
+                .with_cwd(UpdateKind::Always),
+        ),
     );
     sys.refresh_processes(ProcessesToUpdate::All, true);
 
