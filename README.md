@@ -16,9 +16,11 @@ Built with Rust + Tauri 2 + Svelte 5 + xterm.js. Ships as a single native binary
 
 ## Download
 
-Windows builds are available on the [Releases page](https://github.com/flashosophy/OpenSplit/releases).
+Windows and Linux builds are available on the [Releases page](https://github.com/neko-legends/open-split/releases).
 
-Two options:
+Linux / Omarchy: download `OpenSplit_x.x.x_amd64.AppImage`, make it executable (`chmod +x`) and run it. Tested on Omarchy (Arch Linux + Hyprland, Wayland, NVIDIA).
+
+Windows options:
 
 - **NSIS setup** (`OpenSplit_x.x.x_x64-setup.exe`) — installs to Program Files with a Start Menu shortcut.
 - **MSI** (`OpenSplit_x.x.x_x64_en-US.msi`) — standard Windows installer, useful for enterprise / managed deployments.
