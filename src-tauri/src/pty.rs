@@ -227,9 +227,14 @@ pub fn spawn(app: &AppHandle, spec: LaunchSpec, cols: u16, rows: u16) -> Result<
     }
     // On Linux, drop everything an AppImage runtime injected (no-op otherwise)
     // so shells and agent CLIs see the user's normal environment.
+    // `CommandBuilder::new` pre-populates the parent environment, so clear it
+    // first; `env()` alone can only override keys, not remove them.
     #[cfg(target_os = "linux")]
-    for (k, v) in appimage_free_env(std::env::vars_os(), appimage_dir().as_deref()) {
-        cmd.env(k, v);
+    {
+        cmd.env_clear();
+        for (k, v) in appimage_free_env(std::env::vars_os(), appimage_dir().as_deref()) {
+            cmd.env(k, v);
+        }
     }
     for (k, v) in &spec.env {
         cmd.env(k, v);
