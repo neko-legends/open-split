@@ -3,7 +3,8 @@
 # Copy to your platform's config dir (or just let OpenSplit auto-create it on
 # first launch):
 #   - Windows: %APPDATA%\opensplit\config.toml
-#   - Linux:   ~/.config/opensplit/config.toml
+#   - Linux:   $XDG_CONFIG_HOME/opensplit/config.toml
+#              (default ~/.config/opensplit/config.toml)
 #   - macOS:   ~/Library/Application Support/opensplit/config.toml
 
 # Profile launched when you type `opensplit` with no arguments.
@@ -24,7 +25,7 @@ low_gpu_update_ms = 1000
 # Each profile is `[profiles.<name>]` with:
 #   command = "..."       (executable, resolved on PATH)
 #   args    = ["..."]     (argv)
-#   cwd     = "..."       (optional; defaults to $HOME)
+#   cwd     = "..."       (optional; defaults to your home directory)
 #   env     = { K = "V" } (optional env overrides)
 
 [profiles.opencode]
@@ -42,8 +43,21 @@ command = "kimi-cli"
 [profiles.aider]
 command = "aider"
 
-[profiles.shell]
-# On Linux/macOS this picks up $SHELL automatically by default; you can pin it:
-# command = "/bin/zsh"
+# Without a `shell` profile OpenSplit uses the platform default shell:
+#   - Windows:       pwsh -> powershell -> cmd
+#   - Linux/macOS:   your login shell ($SHELL, else /etc/passwd, else bash),
+#                    started as a login shell (`-l`)
+# Uncomment one of these to pin it:
+#
+# [profiles.shell]          # Windows
+# command = "pwsh"
+#
+# [profiles.shell]          # Linux/macOS
+# command = "/usr/bin/zsh"
 # args = ["-l"]
-command = "pwsh"
+
+# SSH into a host in a new pane (splits of an ssh pane re-run the same ssh
+# command when ssh_inherit = true):
+# [profiles.devbox]
+# command = "ssh"
+# args = ["devbox"]

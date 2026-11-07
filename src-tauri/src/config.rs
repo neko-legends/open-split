@@ -2,7 +2,8 @@
 //!
 //! Config lives at the platform-conventional config dir under `opensplit/`:
 //!   - Windows: `%APPDATA%\opensplit\config.toml`
-//!   - Linux:   `~/.config/opensplit/config.toml`
+//!   - Linux:   `$XDG_CONFIG_HOME/opensplit/config.toml` (default
+//!              `~/.config/opensplit/config.toml`)
 //!   - macOS:   `~/Library/Application Support/opensplit/config.toml`
 //!
 //! On first launch we write a minimal config (no default_profile set), so the
@@ -200,13 +201,22 @@ pub fn spec_for_detected(config: &Config, name: &str, resolved_path: Option<&str
     if let Some(spec) = profile_to_spec(config, name) {
         return spec;
     }
+    // On Unix the built-in "shell" entry is the user's login shell; start it
+    // as a login shell (`-l`, understood by bash, zsh, fish, sh, nu) so the
+    // user's profile (PATH, mise/nvm activation, etc.) is loaded just as in
+    // a regular terminal emulator.
+    let args = if cfg!(not(windows)) && name == "shell" {
+        vec!["-l".to_string()]
+    } else {
+        vec![]
+    };
     LaunchSpec {
         // Prefer the resolved absolute path when we have it (more reliable
         // than relying on PATH at spawn time, especially for GUI launches).
         command: resolved_path
             .map(|s| s.to_string())
             .unwrap_or_else(|| name.to_string()),
-        args: vec![],
+        args,
         cwd: None,
         env: HashMap::new(),
         profile: Some(name.to_string()),
@@ -218,4 +228,23 @@ pub fn spec_for_detected(config: &Config, name: &str, resolved_path: Option<&str
 pub fn config_path() -> Option<PathBuf> {
     let dir = dirs::config_dir()?;
     Some(dir.join("opensplit").join("config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detected_shell_spec_is_login_shell_on_unix() {
+        let cfg = Config::defaults();
+        let spec = spec_for_detected(&cfg, "shell", Some("/usr/bin/bash"));
+        assert_eq!(spec.command, "/usr/bin/bash");
+        if cfg!(windows) {
+            assert!(spec.args.is_empty());
+        } else {
+            assert_eq!(spec.args, vec!["-l".to_string()]);
+        }
+        // Non-shell tools never get extra args.
+        assert!(spec_for_detected(&cfg, "claude", Some("/x/claude")).args.is_empty());
+    }
 }

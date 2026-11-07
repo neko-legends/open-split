@@ -424,6 +424,14 @@ pub fn require(reg: &PaneRegistry, pane_id: &str) -> Result<Arc<Pane>> {
 /// On Linux/macOS it adds ~/.cargo/bin, ~/.local/bin, etc. that are usually
 /// only on PATH when a shell profile has sourced the relevant init scripts.
 fn augmented_path() -> String {
+    let joined = std::env::join_paths(augmented_dirs()).unwrap_or_default();
+    joined.to_string_lossy().to_string()
+}
+
+/// The directories behind [`augmented_path`], de-duplicated, original PATH
+/// first. Also used for tool lookup on Unix so detection finds exactly what
+/// a spawned pane will run.
+fn augmented_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
 
     // Start with whatever the process already has (filtering out the broken
@@ -468,6 +476,15 @@ fn augmented_path() -> String {
             dirs.push(home.join(".volta").join("bin"));
             dirs.push(home.join(".nvm").join("versions").join("node")); // rough; nvm is more complex
         }
+        // mise (Omarchy's default tool manager) shims, which is where
+        // npm-installed agent CLIs like codex/claude/opencode often live.
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("share")));
+        if let Some(data_home) = data_home {
+            dirs.push(data_home.join("mise").join("shims"));
+        }
         // Homebrew on Apple Silicon
         #[cfg(target_arch = "aarch64")]
         dirs.push(std::path::PathBuf::from("/opt/homebrew/bin"));
@@ -483,13 +500,9 @@ fn augmented_path() -> String {
     // De-duplicate, preserving insertion order (original PATH first, so the
     // user's explicit ordering is respected; the added dirs are fallbacks).
     let mut seen = std::collections::HashSet::new();
-    let unique: Vec<std::path::PathBuf> = dirs
-        .into_iter()
+    dirs.into_iter()
         .filter(|d| seen.insert(d.clone()))
-        .collect();
-
-    let joined = std::env::join_paths(unique).unwrap_or_default();
-    joined.to_string_lossy().to_string()
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -509,7 +522,8 @@ fn augmented_path() -> String {
 ///     interactive shells typically pick up via the user profile but that
 ///     GUI-launched processes may miss (e.g. `%APPDATA%\npm`).
 ///
-/// On Unix: returns `(program, args)` unchanged — execve handles PATH for us.
+/// On Unix: resolves bare names against the augmented PATH and returns the
+/// absolute path with `args` unchanged.
 fn resolve_program(program: &str, args: &[String]) -> Result<(String, Vec<String>)> {
     // Absolute / explicit-relative paths bypass PATH lookup entirely.
     let p = Path::new(program);
@@ -537,9 +551,11 @@ fn resolve_program(program: &str, args: &[String]) -> Result<(String, Vec<String
 
     #[cfg(not(windows))]
     {
-        // execve will handle PATH lookup; just sanity-check it exists.
-        if which_unix(program).is_some() {
-            return Ok((program.to_string(), args.to_vec()));
+        // Spawn the resolved absolute path: the lookup covers the augmented
+        // PATH (e.g. ~/.local/bin, mise shims) that a GUI-launched process
+        // may not have itself.
+        if let Some(found) = which_unix(program) {
+            return Ok((found.display().to_string(), args.to_vec()));
         }
         return Err(anyhow!(
             "could not find `{program}` on PATH. \
@@ -634,11 +650,11 @@ pub(crate) fn which_windows(program: &str) -> Option<PathBuf> {
     None
 }
 
+/// Unix PATH lookup over the same augmented directory list that spawned panes
+/// get as their `PATH`.
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn which_unix(program: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
+    for dir in augmented_dirs() {
         let cand = dir.join(program);
         if cand.is_file() {
             // Best-effort exec-bit check.

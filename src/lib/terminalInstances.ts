@@ -22,6 +22,16 @@ import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { copyText } from "./clipboard";
 
+/**
+ * Terminal font stack. On Linux, fontconfig substitutes a missing family
+ * (e.g. 'Cascadia Code') with a proportional font that WebKitGTK accepts,
+ * which makes xterm measure far-too-wide cells; the generic `monospace`
+ * alias resolves to the user's configured monospace font instead.
+ */
+const TERMINAL_FONT_FAMILY = navigator.userAgent.includes("Linux")
+  ? "monospace"
+  : "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, 'Liberation Mono', monospace";
+
 export interface TerminalInstance {
   term: Terminal;
   fitAddon: FitAddon;
@@ -239,8 +249,7 @@ export async function createInstance(
   await import("@xterm/xterm/css/xterm.css");
 
   const term = new Terminal({
-    fontFamily:
-      "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, 'Liberation Mono', monospace",
+    fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 13,
     lineHeight: 1.15,
     cursorBlink: false,

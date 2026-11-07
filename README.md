@@ -2,7 +2,7 @@
 
 OpenSplit is a fast, cross-platform terminal harness for AI coding agents and developer shells. Launch opencode, codex, claude, grok-build, hermes, kimi-cli, aider, or any shell — then right-click to split panes horizontally or vertically, drag to resize, switch tools mid-session without losing context, and inherit your SSH session into every new split.
 
-Built with Rust + Tauri 2 + Svelte 5 + xterm.js. Ships as a single native binary on Windows, with Linux and macOS builds possible from source.
+Built with Rust + Tauri 2 + Svelte 5 + xterm.js. Ships as a single native binary on Windows and as an AppImage on Linux, with macOS builds possible from source.
 
 ## Screenshots
 
@@ -136,7 +136,7 @@ Then `ssh my-server` works the same in every pane. If `ssh my-server` still asks
 Config file locations:
 
 - Windows: `%APPDATA%\opensplit\config.toml`
-- Linux: `~/.config/opensplit/config.toml`
+- Linux: `$XDG_CONFIG_HOME/opensplit/config.toml` (default `~/.config/opensplit/config.toml`)
 - macOS: `~/Library/Application Support/opensplit/config.toml`
 
 A default config is created on first launch. Example:
@@ -209,6 +209,25 @@ dist\opensplit-26.5.16-windows-x64.exe.sha256  # SHA256 checksum
 src-tauri\target\release\bundle\nsis\OpenSplit_26.5.16_x64-setup.exe
 src-tauri\target\release\bundle\msi\OpenSplit_26.5.16_x64_en-US.msi
 ```
+
+### Linux
+
+On Linux, the default shell pane runs your login shell (`$SHELL`, falling back
+to the shell in `/etc/passwd`, then bash) with `-l`; agent CLIs are found on
+PATH plus `~/.local/bin`, `~/.cargo/bin`, mise shims and similar per-user dirs.
+
+```sh
+npm ci
+npx tauri build --bundles appimage   # src-tauri/target/release/bundle/appimage/*.AppImage
+npx tauri build --no-bundle          # just the binary: src-tauri/target/release/opensplit
+```
+
+### CI release builds
+
+`.github/workflows/release.yml` builds the Windows portable `opensplit.exe`,
+the NSIS `*-setup.exe` and the Linux `*.AppImage`. Pushing the `release-test`
+branch keeps them as workflow artifacts; pushing a `v*` tag uploads them to
+that release.
 
 ### Manual build (any platform)
 

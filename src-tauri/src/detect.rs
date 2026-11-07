@@ -223,15 +223,33 @@ fn default_shell_path() -> Option<PathBuf> {
         .or_else(|| which("cmd"))
 }
 
+/// The user's login shell: `$SHELL`, else the shell recorded for the user in
+/// `/etc/passwd` (GUI sessions sometimes start without `$SHELL`), else bash,
+/// zsh, sh from PATH.
 #[cfg(not(windows))]
 fn default_shell_path() -> Option<PathBuf> {
-    if let Ok(sh) = std::env::var("SHELL") {
-        let p = PathBuf::from(&sh);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    which("zsh")
+    let usable = |p: PathBuf| p.is_file().then_some(p);
+    std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .and_then(usable)
+        .or_else(|| passwd_shell().and_then(usable))
         .or_else(|| which("bash"))
+        .or_else(|| which("zsh"))
         .or_else(|| which("sh"))
+}
+
+/// Login shell for the current user from `/etc/passwd`, matched by `$USER`
+/// (or `$LOGNAME`).
+#[cfg(not(windows))]
+fn passwd_shell() -> Option<PathBuf> {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .ok()?;
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    passwd.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        (fields.len() >= 7 && fields[0] == user && !fields[6].is_empty())
+            .then(|| PathBuf::from(fields[6]))
+    })
 }
