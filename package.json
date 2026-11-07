@@ -1,6 +1,6 @@
 {
   "name": "opensplit",
-  "version": "26.11.9",
+  "version": "26.11.10",
   "description": "A fast cross-platform terminal harness with right-click splits and SSH session inheritance.",
   "type": "module",
   "license": "MIT",
