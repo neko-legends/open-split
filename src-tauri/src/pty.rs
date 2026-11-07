@@ -221,7 +221,14 @@ pub fn spawn(app: &AppHandle, spec: LaunchSpec, cols: u16, rows: u16) -> Result<
         cmd.cwd(cwd);
     }
     // Pass through current env, then layer profile-specified vars.
+    #[cfg(not(target_os = "linux"))]
     for (k, v) in std::env::vars() {
+        cmd.env(k, v);
+    }
+    // On Linux, drop everything an AppImage runtime injected (no-op otherwise)
+    // so shells and agent CLIs see the user's normal environment.
+    #[cfg(target_os = "linux")]
+    for (k, v) in appimage_free_env(std::env::vars_os(), appimage_dir().as_deref()) {
         cmd.env(k, v);
     }
     for (k, v) in &spec.env {
@@ -442,6 +449,11 @@ fn augmented_dirs() -> Vec<std::path::PathBuf> {
             if s == "$env:PATH" || s == "%PATH%" {
                 continue; // broken registry entry — skip
             }
+            // AppImage-internal bin dirs must not leak into panes or lookups.
+            #[cfg(target_os = "linux")]
+            if appimage_dir().is_some_and(|appdir| d.starts_with(appdir)) {
+                continue;
+            }
             dirs.push(d);
         }
     }
@@ -503,6 +515,111 @@ fn augmented_dirs() -> Vec<std::path::PathBuf> {
     dirs.into_iter()
         .filter(|d| seen.insert(d.clone()))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// AppImage environment isolation (Linux)
+// ---------------------------------------------------------------------------
+
+/// Mount/extract dir of the AppImage we are running from, if any.
+#[cfg(target_os = "linux")]
+fn appimage_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Environment for pane children with the AppImage runtime's additions
+/// removed: every variable pointing into `appdir` (for `:`-separated lists
+/// only the entries under `appdir` are dropped), the runtime's own
+/// `APPDIR`/`APPIMAGE`/`ARGV0`/`OWD`, and the GTK hook's `GTK_THEME` and
+/// forced `GDK_BACKEND` (`x11`, or the `wayland,x11` that `main` rewrites
+/// it to).
+/// Returns the input unchanged when not running from an AppImage.
+#[cfg(target_os = "linux")]
+fn appimage_free_env(
+    vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    appdir: Option<&Path>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    use std::ffi::OsString;
+    let Some(appdir) = appdir else {
+        return vars.collect();
+    };
+    let appdir_str = appdir.to_string_lossy().into_owned();
+    let mut out = Vec::new();
+    for (key, value) in vars {
+        let k = key.to_string_lossy();
+        if matches!(
+            k.as_ref(),
+            "APPDIR" | "APPIMAGE" | "ARGV0" | "OWD" | "PYTHONDONTWRITEBYTECODE" | "GTK_THEME"
+        ) {
+            continue;
+        }
+        let v = value.to_string_lossy();
+        if k == "GDK_BACKEND" && (v == "x11" || v == "wayland,x11") {
+            continue;
+        }
+        if !v.contains(appdir_str.as_str()) {
+            out.push((key, value));
+            continue;
+        }
+        if v.contains(':') {
+            let kept: Vec<&str> = v
+                .split(':')
+                .filter(|e| !e.is_empty() && !Path::new(e).starts_with(appdir))
+                .collect();
+            if !kept.is_empty() {
+                out.push((key, OsString::from(kept.join(":"))));
+            }
+        }
+        // Scalar value pointing into the AppImage: drop it.
+    }
+    out
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod appimage_env_tests {
+    use super::appimage_free_env;
+    use std::{ffi::OsString, path::Path};
+
+    fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+        pairs.iter().map(|(k, v)| (k.into(), v.into())).collect()
+    }
+
+    #[test]
+    fn strips_appimage_vars_and_entries() {
+        let appdir = Path::new("/tmp/.mount_OpenSpXYZ");
+        let input = env(&[
+            ("HOME", "/home/u"),
+            ("APPDIR", "/tmp/.mount_OpenSpXYZ"),
+            ("APPIMAGE", "/home/u/OpenSplit.AppImage"),
+            ("ARGV0", "OpenSplit.AppImage"),
+            ("OWD", "/home/u"),
+            ("GTK_THEME", "Adwaita:dark"),
+            ("GDK_BACKEND", "wayland,x11"),
+            ("PATH", "/tmp/.mount_OpenSpXYZ/usr/bin:/usr/local/bin:/usr/bin"),
+            ("LD_LIBRARY_PATH", "/tmp/.mount_OpenSpXYZ/usr/lib"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_OpenSpXYZ/usr/share:/usr/share"),
+            ("GDK_PIXBUF_MODULE_FILE", "/tmp/.mount_OpenSpXYZ/usr/lib/loaders.cache"),
+            ("SHELL", "/usr/bin/bash"),
+        ]);
+        let out = appimage_free_env(input.into_iter(), Some(appdir));
+        assert_eq!(
+            out,
+            env(&[
+                ("HOME", "/home/u"),
+                ("PATH", "/usr/local/bin:/usr/bin"),
+                ("XDG_DATA_DIRS", "/usr/share"),
+                ("SHELL", "/usr/bin/bash"),
+            ])
+        );
+    }
+
+    #[test]
+    fn untouched_outside_appimage() {
+        let input = env(&[("GDK_BACKEND", "x11"), ("OWD", "/x")]);
+        assert_eq!(appimage_free_env(input.clone().into_iter(), None), input);
+    }
 }
 
 // ---------------------------------------------------------------------------
