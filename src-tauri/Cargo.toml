@@ -40,6 +40,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sysinfo = "0.32"
 bytes = "1"
 
+# Same version Tauri already pulls in (via tao/wry); used to fail cleanly when
+# no display is reachable instead of panicking inside Tauri's GTK init.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

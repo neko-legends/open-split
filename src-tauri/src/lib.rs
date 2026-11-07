@@ -20,6 +20,29 @@ const MIN_WINDOW_HEIGHT: f64 = 320.0;
 const LANDSCAPE_WINDOW_WIDTH_RATIO: f64 = 0.5;
 const PORTRAIT_WINDOW_WIDTH_RATIO: f64 = 0.9;
 
+/// Initialise GTK up front so a missing or unreachable display ends in a clear
+/// message and exit code 1. Otherwise Tauri's own `gtk::init()` panics with
+/// "Failed to initialize gtk backend!", and with `panic = "abort"` that is a
+/// SIGABRT plus a core dump (e.g. `GDK_BACKEND=x11` with no `DISPLAY`).
+/// Tauri's later `gtk::init()` is a no-op once this has succeeded.
+#[cfg(target_os = "linux")]
+fn ensure_display() {
+    if let Err(e) = gtk::init() {
+        let var = |k: &str| std::env::var(k).unwrap_or_else(|_| "<unset>".into());
+        let msg = format!(
+            "OpenSplit could not open a display ({e}).\n  \
+             GDK_BACKEND={}  WAYLAND_DISPLAY={}  DISPLAY={}\n  \
+             Run it inside a graphical session, or point WAYLAND_DISPLAY / DISPLAY \
+             at a running compositor or X server.",
+            var("GDK_BACKEND"),
+            var("WAYLAND_DISPLAY"),
+            var("DISPLAY"),
+        );
+        eprintln!("{msg}");
+        std::process::exit(1);
+    }
+}
+
 /// CLI arguments understood by the `opensplit` binary.
 #[derive(Debug, Parser)]
 #[command(
@@ -49,6 +72,9 @@ pub fn run() {
         .try_init();
 
     let cli = Cli::parse();
+
+    #[cfg(target_os = "linux")]
+    ensure_display();
 
     let config = match config::Config::load_or_create() {
         Ok(c) => c,
