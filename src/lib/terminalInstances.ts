@@ -321,6 +321,9 @@ export function attach(paneId: string, host: HTMLElement): void {
   } catch {
     /* host may not have layout yet; ResizeObserver will catch it */
   }
+
+  // Opening or reparenting loses DOM focus; restore it for the wanted pane.
+  if (wantedFocusPaneId === paneId) applyFocus(inst);
 }
 
 /**
@@ -362,12 +365,36 @@ export function pasteToInstance(paneId: string, text: string): void {
   }
 }
 
-/** Focus the terminal. */
+/**
+ * The pane that should own keyboard focus. Kept separately from the DOM focus
+ * because a tree change (split / close / respawn) unmounts and remounts the
+ * Terminal views: a brand-new pane is not opened into the DOM until its view
+ * mounts, and an existing pane's xterm element is reparented, which drops DOM
+ * focus. attach() re-applies focus to this pane whenever it (re)mounts.
+ */
+let wantedFocusPaneId: string | null = null;
+
+function applyFocus(inst: TerminalInstance): void {
+  if (!inst.opened || !inst.term.element?.isConnected) return;
+  try { inst.term.focus(); } catch { /* ignore */ }
+}
+
+/**
+ * Give the pane keyboard focus — now if its terminal is already in the DOM,
+ * otherwise as soon as attach() mounts it. A follow-up attempt on the next
+ * frame covers views that remount later in the same update.
+ */
 export function focusInstance(paneId: string): void {
+  wantedFocusPaneId = paneId;
   const inst = instances.get(paneId);
-  if (inst?.opened) {
-    try { inst.term.focus(); } catch { /* ignore */ }
-  }
+  if (inst) applyFocus(inst);
+  requestAnimationFrame(() => {
+    if (wantedFocusPaneId !== paneId) return;
+    const current = instances.get(paneId);
+    if (current && document.activeElement !== current.term.textarea) {
+      applyFocus(current);
+    }
+  });
 }
 
 /** Resize the terminal's virtual viewport. */
@@ -410,6 +437,7 @@ export function destroyInstance(paneId: string): void {
   const inst = instances.get(paneId);
   if (!inst) return;
   instances.delete(paneId);
+  if (wantedFocusPaneId === paneId) wantedFocusPaneId = null;
   if (inst.flushTimer) {
     window.clearTimeout(inst.flushTimer);
   }

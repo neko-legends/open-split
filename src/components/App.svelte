@@ -185,7 +185,10 @@
       // Update the tree: same leaf node, new paneId + title.
       const newTitle = shellSpec.profile ?? shellSpec.command;
       tree = replaceLeafPaneId(tree!, exitingLeaf.id, spawned.pane_id, newTitle);
-      if (focusedPaneId === e.pane_id) focusedPaneId = spawned.pane_id;
+      if (focusedPaneId === e.pane_id) {
+        focusedPaneId = spawned.pane_id;
+        focusInstance(spawned.pane_id);
+      }
     } catch (err) {
       // If respawn fails (e.g. shell not found), leave the dead pane visible
       // with its exit message so the user can read it and close manually.
@@ -207,6 +210,7 @@
     });
     tree = makeLeaf(paneId, spec.profile, title);
     focusedPaneId = paneId;
+    focusInstance(paneId);
   }
 
   async function spawnAndAttachLeaf(source: SpawnSource, title: string): Promise<{ paneId: string }> {
@@ -235,6 +239,7 @@
       );
       tree = makeLeaf(paneId, tool.name, tool.label);
       focusedPaneId = paneId;
+      focusInstance(paneId);
     } catch (e) {
       bootError = `Failed to launch ${tool.label}: ${e}`;
       pickerTools = pickerTools ?? [];
@@ -422,8 +427,13 @@
       }
       return;
     }
+    // Keep focus where it was if a different pane held it; otherwise hand it
+    // to a remaining pane so typing keeps going somewhere visible.
     const remaining = leaves(next);
-    const nextId = remaining[0]?.paneId ?? null;
+    const nextId =
+      focusedPaneId && focusedPaneId !== paneId && remaining.some((l) => l.paneId === focusedPaneId)
+        ? focusedPaneId
+        : (remaining[0]?.paneId ?? null);
     focusedPaneId = nextId;
     if (nextId) focusInstance(nextId);
   }
